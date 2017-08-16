@@ -1,0 +1,18 @@
+//Bercovier solutions of the Brinkman equations (with symmetrized strain) on the unit square
+
+func pex=(x-0.5)*(y-0.5); func dxpex=(y-0.5); func dypex=(x-0.5);
+func u1ex=-256*x^2*(x-1)^2*y*(y-1)*(2*y-1); 
+func u2ex=256*y^2*(y-1)^2*x*(x-1)*(2*x-1); 
+func dxu1=-512*x*(x-1)*(2*x-1)*y*(y-1)*(2*y-1);
+func dyu1=-256*x^2*(x-1)^2*(6*y^2-6*y+1);
+func dxu2=256*y^2*(y-1)^2*(6*x^2-6*x+1);
+func dyu2=-dxu1;
+func dxxu1=-512*(6*x^2-6*x+1)*y*(y-1)*(2*y-1);
+func dyyu1=-256*x^2*(x-1)^2*(12*y-6);
+func dxxu2=256*y^2*(y-1)^2*(12*x-6);
+func dyyu2=512*x*(x-1)*(2*x-1)*(6*y^2-6*y+1);
+func dydxu2=512*(6*x^2-6*x+1)*y*(y-1)*(2*y-1); 
+func dxdyu1=-512*x*(x-1)*(2*x-1)*(6*y^2-6*y+1);
+
+func f1=kappa*u1ex-nu*(dxxu1+0.5*dyyu1+0.5*dydxu2) + dxpex;
+func f2=kappa*u2ex-nu*(0.5*dxxu2+0.5*dxdyu1+dyyu2) + dypex;

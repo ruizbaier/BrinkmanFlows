@@ -1,0 +1,191 @@
+load "iovtk"; load "MUMPS_Freefem";
+/*--------------------------------------------------------------------------
+Discontinuous FVE method (P1dc-P0) for optimal control of the Brinkman problem
+
+  // (nTonEdge/2-0.5) counts 1/2 of an interior edge and 0 of a boundary edge. Useful
+  // if no jump appears in the term. Otherwise the term vanishes anyway
+  // (1.0/nTonEdge) counts 1/2 of an interior edge and 1 of a boundary edge
+    
+ -----------------------------------------------------------------------*/
+
+string save="outputfiles/Brinkman2D_Active_sets_"; 
+
+macro div(w1,w2) ( dx(w1)+dy(w2) ) //
+macro Epsilon(w1,w2) [dx(w1),dy(w2),(dy(w1)+dx(w2))/sqrt2] //
+macro Grad(w) [dx(w),dy(w)] //
+macro EpsN1(w1,w2) (dx(w1)*N.x+0.5*(dy(w1)+dx(w2))*N.y) //
+macro EpsN2(w1,w2) (0.5*(dy(w1)+dx(w2))*N.x+dy(w2)*N.y) //
+macro meanEpsN1(w1,w2) (mean(dx(w1))*N.x+0.5*mean(dy(w1)+dx(w2))*N.y) //
+macro meanEpsN2(w1,w2) (0.5*mean(dy(w1)+dx(w2))*N.x+mean(dy(w2))*N.y) //
+mesh Th; int[int] boundary=[1,2,3,4];
+
+real lambda=1, aa=-0.1, bb=0.25, kappa=1.0, tgn=1.0e12, 
+	nu=1.0, sqrt2=sqrt(2.0), theta=1.0, stabVelJump=2.0e3, fixL02=1e4, 
+	stabPressJump=0.2;  
+
+include "exactSolsControlBrinkman2D.edp";
+   
+int steps=5;
+real[int] Y0error(steps), perror(steps), Yherror(steps), Wherror(steps), 
+hh(steps), rp(steps), rYh(steps), rWh(steps), rY0(steps), uerror(steps), 
+W0error(steps), rW0(steps), ru(steps), rerror(steps), rr(steps), iter(steps); 
+
+for (int n=0; n<steps ;n++)
+{
+	int nps=2^n+2; 
+  	Th = square(nps,nps);
+
+  	fespace Vh(Th,[P1dc,P1dc]); Vh [w1,w2], [v1,v2], [Y1,Y2], [t1,t2];
+  	fespace Uh(Th,[P1,P1]); Uh [u1k,u2k], [u1,u2], [z1,z2], 
+  		[Aa1,Aa2], [Ab1,Ab2], [Aa1k,Aa2k], [Ih1,Ih2], 
+  		[Ih1k,Ih2k], [Ab1k,Ab2k];
+  	fespace Qh(Th,P0); Qh p, q, r, s, hK=hTriangle; hh[n] = hK[].max;  
+  	real [int] oneU(Uh.ndof); oneU=1.;
+  	
+  	
+  	problem Coupled([Y1,Y2,p,w1,w2,r,u1,u2],[v1,v2,q,t1,t2,s,z1,z2]) = 
+  	int2d(Th)(kappa*(Y1*v1+Y2*v2))
+	+int2d(Th)(nu*Epsilon(Y1,Y2)'*Epsilon(v1,v2))
+
+	-intalledges(Th)((1.0/nTonEdge)*nu*(meanEpsN1(Y1,Y2)*jump(v1)+meanEpsN2(Y1,Y2)*jump(v2)
+		+theta*nu*(meanEpsN1(v1,v2)*jump(Y1)+meanEpsN2(v1,v2)*jump(Y2))))
+
+	-intalledges(Th,boundary)(nu*(EpsN1(Y1,Y2)*v1+EpsN2(Y1,Y2)*v2
+		+theta*nu*(EpsN1(v1,v2)*Y1+EpsN2(v1,v2)*Y2)))
+ 
+	+intalledges(Th)((1.0/nTonEdge)*nu*stabVelJump/lenEdge*(jump(Y1)*jump(v1)+jump(Y2)*jump(v2))) 
+	+intalledges(Th,boundary)(nu*stabVelJump/lenEdge*(Y1*v1+Y2*v2)) 
+	    
+	//weak imposition of Dirichlet BC
+    +int1d(Th,boundary)(tgn*(Y1*v1+Y2*v2))-int1d(Th,boundary)(tgn*(Y1ex*v1+Y2ex*v2))
+	        
+    -int2d(Th)(p*div(v1,v2)-q*div(Y1,Y2)) 
+    -intalledges(Th)((1.0/nTonEdge)*(mean(p)*jump(v1*N.x+v2*N.y)-mean(q)*jump(Y1*N.x+Y2*N.y)))        
+	-intalledges(Th,boundary)(p*[v1,v2]'*[N.x,N.y] - q*[Y1,Y2]'*[N.x,N.y])
+	
+	//L02 fix
+    +int2d(Th)(fixL02*p*q)-int2d(Th)(fixL02*pex*q)
+     
+    //RHS
+    -int2d(Th)([f1,f2]'*[v1,v2])
+    -int2d(Th)([u1,u2]'*[v1,v2])
+    
+    //Costate blocks  
+	+int2d(Th)(kappa*(w1*t1+w2*t2))
+	+int2d(Th)(nu*Epsilon(w1,w2)'*Epsilon(t1,t2))
+	-intalledges(Th)((1.0/nTonEdge)*nu*(meanEpsN1(w1,w2)*jump(t1)+meanEpsN2(w1,w2)*jump(t2)
+        +theta*nu*(meanEpsN1(t1,t2)*jump(w1)+meanEpsN2(t1,t2)*jump(w2))))
+
+	-intalledges(Th,boundary)(nu*(EpsN1(w1,w2)*t1+EpsN2(w1,w2)*t2
+		+theta*nu*(EpsN1(t1,t2)*w1+EpsN2(t1,t2)*w2)))
+ 
+	+intalledges(Th)((1.0/nTonEdge)*nu*stabVelJump/lenEdge*(jump(w1)*jump(t1)+jump(w2)*jump(t2))) 
+	+intalledges(Th,boundary)(nu*stabVelJump/lenEdge*(w1*t1+w2*t2)) 
+	    
+	//weak imposition of Dirichlet BC
+    +int1d(Th,boundary)(tgn*(w1*t1+w2*t2))-int1d(Th,boundary)(tgn*(W1ex*t1+W2ex*t2))
+        
+    +int2d(Th)(r*div(t1,t2)-s*div(w1,w2)) 
+    +intalledges(Th)((1.0/nTonEdge)*(mean(r)*jump(t1*N.x+t2*N.y)-mean(s)*jump(w1*N.x+w2*N.y)))        
+	+intalledges(Th,boundary)(r*[t1,t2]'*[N.x,N.y] - s*[w1,w2]'*[N.x,N.y])
+	//L02 fix
+    +int2d(Th)(fixL02*r*s)-int2d(Th)(fixL02*rex*s)
+     
+    //RHS
+    -int2d(Th)([-Yd1,-Yd2]'*[t1,t2])
+    -int2d(Th)([Y1,Y2]'*[t1,t2])       
+     
+    //Control equation blocks 
+    +int2d(Th)([u1,u2]'*[z1,z2]) 
+  	-int2d(Th)(-1.0/lambda*[Ih1*w1,Ih2*w2]'*[z1,z2]) 
+    -int2d(Th)([aa*Aa1+bb*Ab1,aa*Aa2+bb*Ab2]'*[z1,z2])
+
+    ;
+		 
+
+	//Initialization of control, active sets, and adjoint velocity
+	u1k[]=bb; Aa1k[]=0.; Ab1k[]=0.; Ih1k[]=1.0; w1[]=-lambda*u1k[]; 
+
+
+  	// *************  Iteration algorithm **************** // 
+  	real tol=0.0, resnorm = 2.0; int loopmax=10, loopcount = 0;
+	while (loopcount <= loopmax && resnorm>tol)
+      {
+		loopcount ++;
+		if(mpirank==0)  
+	  		cout << "Iteration loop " << loopcount << endl;
+
+	  	 	
+		//Active sets
+		[Aa1,Aa2]=[( -1.0/lambda*w1) <aa,( -1.0/lambda*w2) <aa]; 
+		[Ab1,Ab2]=[( -1.0/lambda*w1) >bb,( -1.0/lambda*w2) >bb];
+		//Inactive set
+		Ih1[]=1.0; Ih1[]-=Aa1[]; Ih1[]-=Ab1[]; 
+		
+		//Residual computation and stopping criterion
+  		if(loopcount >1)
+  		{
+  		real[int] resa=Aa1[]-Aa1k[], resb=Ab1[]-Ab1k[], resi=Ih1[]-Ih1k[]; 
+  			resnorm=resa.l2+resb.l2; 
+  		cout << " Norm of residual = " << resnorm << endl;
+  		}
+ 		
+		//Solution 		
+		Coupled;
+	  		
+  		//reinitialization of sets and control 
+  		Aa1k[]=Aa1[]; Ab1k[]=Ab1[]; Ih1k[]=Ih1[]; u1k[]=u1[];
+	 }	
+	
+	//savevtk(save+".vtk", Th, [Y1,Y2,0], Y1, Y2, [u1, u2, 0], u1, u2, p, dataname="y y1 y2 u u1 u2 p");			
+	//Error computation  
+  	Y0error[n] = sqrt( int2d(Th)(square(Y1ex-Y1)+square(Y2ex-Y2)));
+  	Yherror[n] = sqrt( int2d(Th)(square(dxY1-dx(Y1))+square(dyY1-dy(Y1))
+			      +square(dxY2-dx(Y2))+square(dyY2-dy(Y2)))
+                  +intalledges(Th)((1.0/nTonEdge)/lenEdge*(square(jump(Y1ex-Y1))
+                  +square(jump(Y2ex-Y2))))
+                  ); 
+    W0error[n] = sqrt( int2d(Th)(square(W1ex-w1)+square(W2ex-w2)));              
+    Wherror[n] = sqrt( int2d(Th)(square(dxW1-dx(w1))+square(dyW1-dy(w1))
+			      +square(dxW2-dx(w2))+square(dyW2-dy(w2)))
+                  +intalledges(Th)((1.0/nTonEdge)/lenEdge*(square(jump(W1ex-w1))
+                  +square(jump(W2ex-w2))))
+                  );               
+	perror[n]= sqrt( int2d(Th)(square(pex-p)));                  
+	rerror[n]= sqrt( int2d(Th)(square(rex-r))); 
+	uerror[n] = sqrt( int2d(Th)(square(u1ex-u1)+square(u2ex-u2)));
+	
+    iter[n]=loopcount;
+}	
+
+ for (int n=1; n<steps ;n++)
+   {
+     rYh[n]= log(Yherror[n]/Yherror[n-1])/log(hh[n]/hh[n-1]);
+     rW0[n] = log(W0error[n]/W0error[n-1])/log(hh[n]/hh[n-1]);
+     rWh[n]= log(Wherror[n]/Wherror[n-1])/log(hh[n]/hh[n-1]);
+     rY0[n] = log(Y0error[n]/Y0error[n-1])/log(hh[n]/hh[n-1]); 
+     rr[n]= log(rerror[n]/rerror[n-1])/log(hh[n]/hh[n-1]);
+     rp[n]= log(perror[n]/perror[n-1])/log(hh[n]/hh[n-1]);
+     ru[n]= log(uerror[n]/uerror[n-1])/log(hh[n]/hh[n-1]); 
+   }
+
+//Display table with convergence history
+
+cout.fixed;
+ cout<< "==========================================================================================="<<endl;
+ cout<< "    h      e0(y)     r0(y)      eh(w)     rh(w)     e0(r)    r0(r)      e0(u)    r0(u)    i"<<endl;
+ cout<< "==========================================================================================="<<endl;
+ 
+ for (int n=0; n<steps ;n++)
+   {
+     cout.fixed.precision(5);cout<< hh[n] <<" & "<< Y0error[n] <<" & "<< rY0[n]<< " & "<<  Wherror[n] <<" & "<< rWh[n]<<" & "<< rerror[n] <<" & "<< rr[n]<< " & "<< uerror[n] <<" & "<< ru[n]<< " & "; cout.default; cout<<iter[n]   <<endl;
+   }
+
+ cout<< "==========================================================================================="<<endl;   
+   
+   
+   /*   RESULTS 
+   
+*/
+   
+   
